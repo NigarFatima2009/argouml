@@ -180,79 +180,67 @@ public class ItemUID {
             final ItemUID itemUid = ((IItemUID) obj).getItemUID();
             return (itemUid == null ? null : itemUid.toString());
         }
-	Object rv;
-	try {
-	    // TODO: We shouldn't need this reflection any more once we have
-	    // convinced ourselves that everything with a getItemUID method
-	    // is implementing IItemUID
-	    Method m = obj.getClass().getMethod("getItemUID", (Class[]) null);
-	    rv = m.invoke(obj, (Object[]) null);
-	} catch (NoSuchMethodException nsme) {
-	    // Apparently this object had no getItemUID
-	    try {
-                // This is needed for a CommentEdge ...
-                // TODO: Why doesn't CommentEdge implement IItemUID and be
-	        // handled with the mechanism above.
-	        Method m = obj.getClass().getMethod("getUUID", (Class[]) null);
-	        rv = m.invoke(obj, (Object[]) null);
+        
+        // Try getItemUID method first, then fall back to getUUID
+        Object rv = invokeIdMethod(obj, "getItemUID");
+        if (rv == null) {
+            // This is needed for a CommentEdge ...
+            // TODO: Why doesn't CommentEdge implement IItemUID
+            rv = invokeIdMethod(obj, "getUUID");
+            if (rv instanceof String) {
                 return (String) rv;
-	    } catch (NoSuchMethodException nsme2) {
-	        // Apparently this object had no getUUID
-	        return null;
-	    } catch (IllegalArgumentException iare) {
-                LOG.log(Level.SEVERE, "getUUID for " + obj.getClass()
-	                + " takes strange parameter: ",
-	                iare);
-	        return null;
-	    } catch (IllegalAccessException iace) {
-	        // Apparently it had a getItemUID,
-	        // but we're not allowed to call it
-	        return null;
-	    } catch (InvocationTargetException tie) {
-                LOG.log(Level.SEVERE,
-                        "getUUID for " + obj.getClass() + " threw: ",
-	                tie);
-	        return null;
-	    }
-	} catch (SecurityException se) {
-	    // Apparently it had a getItemUID,
-	    // but we're not allowed to call it
-	    return null;
-	} catch (InvocationTargetException tie) {
-            LOG.log(Level.SEVERE,
-                    "getItemUID for " + obj.getClass() + " threw: ",
-                    tie);
-	    return null;
-	} catch (IllegalAccessException iace) {
-	    // Apparently it had a getItemUID,
-	    // but we're not allowed to call it
-	    return null;
-	} catch (IllegalArgumentException iare) {
-            LOG.log(Level.SEVERE,
-                    "getItemUID for " + obj.getClass()
-                    + " takes strange parameter: ",
-                    iare);
-	    return null;
-	} catch (ExceptionInInitializerError eiie) {
-            LOG.log(Level.SEVERE,
-                    "getItemUID for " + obj.getClass()
-                    + " exception: ",
-                    eiie);
-	    return null;
-	}
+            }
+            return null;
+        }
 
-	if (rv == null) {
-	    return null;
-	}
-
-	if (!(rv instanceof ItemUID)) {
+        if (!(rv instanceof ItemUID)) {
             LOG.log(Level.SEVERE,
                     "getItemUID for " + obj.getClass()
                     + " returns strange value: " + rv.getClass());
-	    return null;
-	}
+            return null;
+        }
 
-	return rv.toString();
+        return rv.toString();
+    }
+    
+    /**
+     * Helper method to invoke an ID-returning method via reflection.
+     * Extracts common exception handling logic (refactored from duplicate code).
+     *
+     * @param obj The object to invoke the method on.
+     * @param methodName The name of the method to invoke.
+     * @return The result of the method invocation, or null if failed.
+     */
+    private static Object invokeIdMethod(Object obj, String methodName) {
+        try {
+            Method m = obj.getClass().getMethod(methodName, (Class[]) null);
+            return m.invoke(obj, (Object[]) null);
+        } catch (NoSuchMethodException nsme) {
+            // Object doesn't have this method - this is normal
+            return null;
+        } catch (SecurityException se) {
+            // Method exists but we're not allowed to call it
+            return null;
+        } catch (IllegalAccessException iace) {
+            // Method exists but we're not allowed to call it
+            return null;
+        } catch (IllegalArgumentException iare) {
+            LOG.log(Level.SEVERE,
+                    methodName + " for " + obj.getClass()
+                    + " takes strange parameter: ",
+                    iare);
+            return null;
+        } catch (InvocationTargetException tie) {
+            LOG.log(Level.SEVERE,
+                    methodName + " for " + obj.getClass() + " threw: ",
+                    tie);
+            return null;
+        } catch (ExceptionInInitializerError eiie) {
+            LOG.log(Level.SEVERE,
+                    methodName + " for " + obj.getClass() + " exception: ",
+                    eiie);
+            return null;
+        }
     }
 
     /**
@@ -266,56 +254,65 @@ public class ItemUID {
      * @return	The new ID of the object, or null.
      */
     protected static String createObjectID(Object obj) {
-	if (Model.getFacade().isAUMLElement(obj)) {
-	    return null;
-	}
+        if (Model.getFacade().isAUMLElement(obj)) {
+            return null;
+        }
 
-	if (obj instanceof IItemUID) {
-	    ItemUID uid = new ItemUID();
-	    ((IItemUID) obj).setItemUID(uid);
-	    return uid.toString();
-	}
+        if (obj instanceof IItemUID) {
+            ItemUID uid = new ItemUID();
+            ((IItemUID) obj).setItemUID(uid);
+            return uid.toString();
+        }
 
-	Class[] params = new Class[1];
-	Object[] mparam;
-	params[0] = MYCLASS;
-	try {
+        // Try to set ItemUID via reflection
+        return setItemUIDViaReflection(obj);
+    }
+    
+    /**
+     * Helper method to set ItemUID via reflection.
+     * Extracts common exception handling logic (refactored from duplicate code).
+     *
+     * @param obj The object to set the ItemUID on.
+     * @return The new ID as a String, or null if failed.
+     */
+    private static String setItemUIDViaReflection(Object obj) {
+        Class[] params = new Class[1];
+        Object[] mparam;
+        params[0] = MYCLASS;
+        try {
             // TODO: We shouldn't need this reflection any more once we have
             // convinced ourselves that everything with a setItemUID method
             // is implementing IItemUID
-	    Method m = obj.getClass().getMethod("setItemUID", params);
-	    mparam = new Object[1];
-	    mparam[0] = new ItemUID();
-	    m.invoke(obj, mparam);
-	} catch (NoSuchMethodException nsme) {
-	    // Apparently this object had no setItemUID
-	    return null;
-	} catch (SecurityException se) {
-	    // Apparently it had a setItemUID,
-	    // but we're not allowed to call it
-	    return null;
-	} catch (InvocationTargetException tie) {
-            LOG.log(Level.SEVERE,
-                    "setItemUID for " + obj.getClass() + " threw",
-                    tie);
-	    return null;
-	} catch (IllegalAccessException iace) {
-	    // Apparently it had a setItemUID,
-	    // but we're not allowed to call it
-	    return null;
-	} catch (IllegalArgumentException iare) {
+            Method m = obj.getClass().getMethod("setItemUID", params);
+            mparam = new Object[1];
+            mparam[0] = new ItemUID();
+            m.invoke(obj, mparam);
+            return mparam[0].toString();
+        } catch (NoSuchMethodException nsme) {
+            // Object doesn't have setItemUID method
+            return null;
+        } catch (SecurityException se) {
+            // Method exists but we're not allowed to call it
+            return null;
+        } catch (IllegalAccessException iace) {
+            // Method exists but we're not allowed to call it
+            return null;
+        } catch (IllegalArgumentException iare) {
             LOG.log(Level.SEVERE,
                     "setItemUID for " + obj.getClass()
                     + " takes strange parameter",
                     iare);
-	    return null;
-	} catch (ExceptionInInitializerError eiie) {
+            return null;
+        } catch (InvocationTargetException tie) {
+            LOG.log(Level.SEVERE,
+                    "setItemUID for " + obj.getClass() + " threw",
+                    tie);
+            return null;
+        } catch (ExceptionInInitializerError eiie) {
             LOG.log(Level.SEVERE,
                     "setItemUID for " + obj.getClass() + " threw",
                     eiie);
-	    return null;
-	}
-
-	return mparam[0].toString();
+            return null;
+        }
     }
 }
