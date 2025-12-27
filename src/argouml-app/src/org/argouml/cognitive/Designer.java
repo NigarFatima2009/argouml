@@ -293,114 +293,188 @@ public final class Designer
      * Continuously select and execute critics against this designer's
      * design. {@link #spawnCritiquer(Object)} is used to start a
      * Thread that runs this.
+     * 
+     * <p>Refactored to extract methods and reduce cyclomatic complexity.</p>
      */
     public void run() {
         try {
             while (true) {
-
-                // local variables - what do they do?
-                long critiqueStartTime;
-                long cutoffTime;
-                int minWarmElements = 5;
-                int size;
-
-                // the critiquing thread should wait if disabled.
-                synchronized (this) {
-                    while (!Configuration.getBoolean(
-                            Designer.AUTO_CRITIQUE, true)) {
-                        try {
-                            this.wait();
-                        } catch (InterruptedException ignore) {
-                            LOG.log(Level.SEVERE, "InterruptedException!!!", ignore);
-                        }
-                    }
-                }
-
-                // why?
-                if (critiquingRoot != null
-//                      && getAutoCritique()
-                        && critiqueLock <= 0) {
-
-                    // why?
-                    synchronized (this) {
-                        critiqueStartTime = System.currentTimeMillis();
-                        cutoffTime = critiqueStartTime + 3000;
-
-                        size = addQueue.size();
-                        for (int i = 0; i < size; i++) {
-                            hotQueue.add(addQueue.get(i));
-                            hotReasonQueue.add(addReasonQueue.get(i));
-                        }
-                        addQueue.clear();
-                        addReasonQueue.clear();
-
-                        longestHot = Math.max(longestHot, hotQueue.size());
-                        agency.determineActiveCritics(this);
-
-                        while (hotQueue.size() > 0) {
-                            Object dm = hotQueue.get(0);
-                            Long reasonCode =
-                                    hotReasonQueue.get(0);
-                            hotQueue.remove(0);
-                            hotReasonQueue.remove(0);
-                            Agency.applyAllCritics(dm, theDesigner(),
-                                    reasonCode.longValue());
-                        }
-
-                        size = removeQueue.size();
-                        for (int i = 0; i < size; i++) {
-                            warmQueue.remove(removeQueue.get(i));
-                        }
-                        removeQueue.clear();
-
-                        if (warmQueue.size() == 0) {
-                            warmQueue.add(critiquingRoot);
-                        }
-                        while (warmQueue.size() > 0
-                                && (System.currentTimeMillis() < cutoffTime
-                                        || minWarmElements > 0)) {
-                            if (minWarmElements > 0) {
-                                minWarmElements--;
-                            }
-                            Object dm = warmQueue.get(0);
-                            warmQueue.remove(0);
-                            try {
-                                Agency.applyAllCritics(dm, theDesigner());
-                                java.util.Enumeration subDMs =
-                                        childGenerator.gen(dm);
-                                while (subDMs.hasMoreElements()) {
-                                    Object nextDM = subDMs.nextElement();
-                                    if (!(warmQueue.contains(nextDM))) {
-                                        warmQueue.add(nextDM);
-                                    }
-                                }
-                            } catch (InvalidElementException e) {
-                                // Don't let a transient error kill the thread
-                                LOG.log(Level.WARNING, "Element " + dm
-                                        + "caused an InvalidElementException.  "
-                                        + "Ignoring for this pass.");
-                            }
-                        }
-                    }
+                waitIfAutoCritiqueDisabled();
+                
+                if (shouldPerformCritique()) {
+                    performCritiqueCycle();
                 } else {
-                    critiqueStartTime = System.currentTimeMillis();
+                    // Record start time even when not critiquing
+                    critiqueDuration = 0;
                 }
-                critiqueDuration =
-                        System.currentTimeMillis() - critiqueStartTime;
-                long cycleDuration =
-                    (critiqueDuration * 100) / critiqueCPUPercent;
-                long sleepDuration =
-                    Math.min(cycleDuration - critiqueDuration, 3000);
-                sleepDuration = Math.max(sleepDuration, 1000);
-                LOG.log(Level.FINE, "sleepDuration= {0}", sleepDuration);
+                
+                sleepUntilNextCycle();
+            }
+        } catch (Exception e) {
+            LOG.log(Level.SEVERE, "Critic thread killed by exception", e);
+        }
+    }
+    
+    /**
+     * Waits if auto-critique is disabled.
+     * Extracted from run() to improve readability.
+     */
+    private void waitIfAutoCritiqueDisabled() {
+        synchronized (this) {
+            while (!Configuration.getBoolean(Designer.AUTO_CRITIQUE, true)) {
                 try {
-                    Thread.sleep(sleepDuration);
+                    this.wait();
                 } catch (InterruptedException ignore) {
                     LOG.log(Level.SEVERE, "InterruptedException!!!", ignore);
                 }
             }
-        } catch (Exception e) {
-            LOG.log(Level.SEVERE, "Critic thread killed by exception", e);
+        }
+    }
+    
+    /**
+     * Determines if critique should be performed.
+     * Extracted from run() to improve readability.
+     * 
+     * @return true if critiquing should proceed
+     */
+    private boolean shouldPerformCritique() {
+        return critiquingRoot != null && critiqueLock <= 0;
+    }
+    
+    /**
+     * Performs a complete critique cycle.
+     * Extracted from run() to reduce method complexity.
+     */
+    private void performCritiqueCycle() {
+        synchronized (this) {
+            long critiqueStartTime = System.currentTimeMillis();
+            long cutoffTime = critiqueStartTime + CRITIQUE_CUTOFF_MS;
+            
+            processAddQueue();
+            executeHotQueueCritiques();
+            processRemoveQueue();
+            processWarmQueue(cutoffTime);
+            
+            critiqueDuration = System.currentTimeMillis() - critiqueStartTime;
+        }
+    }
+    
+    /**
+     * Cutoff time for critique cycle in milliseconds.
+     */
+    private static final long CRITIQUE_CUTOFF_MS = 3000;
+    
+    /**
+     * Minimum number of warm elements to process regardless of time.
+     */
+    private static final int MIN_WARM_ELEMENTS = 5;
+    
+    /**
+     * Moves items from add queue to hot queue.
+     * Extracted from run() to improve readability.
+     */
+    private void processAddQueue() {
+        int size = addQueue.size();
+        for (int i = 0; i < size; i++) {
+            hotQueue.add(addQueue.get(i));
+            hotReasonQueue.add(addReasonQueue.get(i));
+        }
+        addQueue.clear();
+        addReasonQueue.clear();
+        longestHot = Math.max(longestHot, hotQueue.size());
+    }
+    
+    /**
+     * Executes critiques on all items in the hot queue.
+     * Extracted from run() to improve readability.
+     */
+    private void executeHotQueueCritiques() {
+        agency.determineActiveCritics(this);
+        
+        while (hotQueue.size() > 0) {
+            Object dm = hotQueue.get(0);
+            Long reasonCode = hotReasonQueue.get(0);
+            hotQueue.remove(0);
+            hotReasonQueue.remove(0);
+            Agency.applyAllCritics(dm, theDesigner(), reasonCode.longValue());
+        }
+    }
+    
+    /**
+     * Removes items from warm queue that are in remove queue.
+     * Extracted from run() to improve readability.
+     */
+    private void processRemoveQueue() {
+        int size = removeQueue.size();
+        for (int i = 0; i < size; i++) {
+            warmQueue.remove(removeQueue.get(i));
+        }
+        removeQueue.clear();
+    }
+    
+    /**
+     * Processes the warm queue with time-limited critique.
+     * Extracted from run() to improve readability.
+     * 
+     * @param cutoffTime the time at which to stop processing
+     */
+    private void processWarmQueue(long cutoffTime) {
+        int minWarmElements = MIN_WARM_ELEMENTS;
+        
+        if (warmQueue.size() == 0) {
+            warmQueue.add(critiquingRoot);
+        }
+        
+        while (warmQueue.size() > 0
+                && (System.currentTimeMillis() < cutoffTime || minWarmElements > 0)) {
+            if (minWarmElements > 0) {
+                minWarmElements--;
+            }
+            
+            Object dm = warmQueue.get(0);
+            warmQueue.remove(0);
+            
+            critiqueWarmQueueItem(dm);
+        }
+    }
+    
+    /**
+     * Critiques a single item from the warm queue.
+     * Extracted from processWarmQueue() to improve readability.
+     * 
+     * @param dm the design material to critique
+     */
+    private void critiqueWarmQueueItem(Object dm) {
+        try {
+            Agency.applyAllCritics(dm, theDesigner());
+            java.util.Enumeration subDMs = childGenerator.gen(dm);
+            while (subDMs.hasMoreElements()) {
+                Object nextDM = subDMs.nextElement();
+                if (!(warmQueue.contains(nextDM))) {
+                    warmQueue.add(nextDM);
+                }
+            }
+        } catch (InvalidElementException e) {
+            // Don't let a transient error kill the thread
+            LOG.log(Level.WARNING, "Element " + dm
+                    + "caused an InvalidElementException.  "
+                    + "Ignoring for this pass.");
+        }
+    }
+    
+    /**
+     * Sleeps until the next critique cycle.
+     * Extracted from run() to improve readability.
+     */
+    private void sleepUntilNextCycle() {
+        long cycleDuration = (critiqueDuration * 100) / critiqueCPUPercent;
+        long sleepDuration = Math.min(cycleDuration - critiqueDuration, 3000);
+        sleepDuration = Math.max(sleepDuration, 1000);
+        LOG.log(Level.FINE, "sleepDuration= {0}", sleepDuration);
+        try {
+            Thread.sleep(sleepDuration);
+        } catch (InterruptedException ignore) {
+            LOG.log(Level.SEVERE, "InterruptedException!!!", ignore);
         }
     }
 
