@@ -554,7 +554,7 @@ public class ListSet<T>
      * @see java.util.List#subList(int, int)
      */
     public List<T> subList(int fromIndex, int toIndex) {
-        return subList(fromIndex, toIndex);
+        return list.subList(fromIndex, toIndex);
     }
 
 }
