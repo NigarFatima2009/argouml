@@ -59,8 +59,112 @@ import org.argouml.util.CollectionUtil;
  * ToDoItems will include ties back to the design rationale log.
  * Also the run-time system needs to know who posted each ToDoItem so
  * that it can automatically remove it if it is no longer valid.
+ * 
+ * <p>Refactored to include Builder pattern to address Long Parameter List smell.
+ * Use {@link Builder} for constructing ToDoItem instances with many parameters.</p>
  */
 public class ToDoItem implements Serializable, WizardItem {
+    
+    /**
+     * Builder class for ToDoItem to address Long Parameter List code smell.
+     * Provides a fluent interface for constructing ToDoItem instances.
+     * 
+     * <p>Example usage:</p>
+     * <pre>
+     * ToDoItem item = new ToDoItem.Builder(poster, headline, offenders)
+     *     .priority(HIGH_PRIORITY)
+     *     .description("Description text")
+     *     .moreInfoURL("http://example.com")
+     *     .build();
+     * </pre>
+     */
+    public static class Builder {
+        // Required parameters
+        private final Poster poster;
+        private final String headline;
+        private final ListSet offenders;
+        
+        // Optional parameters with defaults
+        private int priority = MED_PRIORITY;
+        private String description = "";
+        private String moreInfoURL = "";
+        
+        /**
+         * Constructor with required parameters.
+         * 
+         * @param poster the poster (required, non-null)
+         * @param headline the headline (required)
+         * @param offenders the offenders list (required, non-null)
+         */
+        public Builder(Poster poster, String headline, ListSet offenders) {
+            if (poster == null) {
+                throw new IllegalArgumentException("Poster cannot be null");
+            }
+            if (offenders == null) {
+                throw new IllegalArgumentException("Offenders cannot be null");
+            }
+            this.poster = poster;
+            this.headline = headline;
+            this.offenders = offenders;
+        }
+        
+        /**
+         * Sets the priority level.
+         * 
+         * @param priority the priority value (use constants like HIGH_PRIORITY)
+         * @return this builder for method chaining
+         */
+        public Builder priority(int priority) {
+            this.priority = priority;
+            return this;
+        }
+        
+        /**
+         * Sets the description text.
+         * 
+         * @param description the description
+         * @return this builder for method chaining
+         */
+        public Builder description(String description) {
+            this.description = description;
+            return this;
+        }
+        
+        /**
+         * Sets the more info URL.
+         * 
+         * @param moreInfoURL the URL for additional information
+         * @return this builder for method chaining
+         */
+        public Builder moreInfoURL(String moreInfoURL) {
+            this.moreInfoURL = moreInfoURL;
+            return this;
+        }
+        
+        /**
+         * Builds and returns the ToDoItem instance.
+         * 
+         * @return a new ToDoItem with the configured parameters
+         */
+        public ToDoItem build() {
+            return new ToDoItem(this);
+        }
+    }
+    
+    /**
+     * Private constructor for Builder pattern.
+     * 
+     * @param builder the builder containing all parameters
+     */
+    private ToDoItem(Builder builder) {
+        thePoster = builder.poster;
+        theHeadline = builder.headline;
+        theOffenders = builder.offenders;
+        thePriority = builder.priority;
+        theDescription = builder.description;
+        theMoreInfoURL = builder.moreInfoURL;
+        theWizard = null;
+    }
 
     ////////////////////////////////////////////////////////////////
     // constants
