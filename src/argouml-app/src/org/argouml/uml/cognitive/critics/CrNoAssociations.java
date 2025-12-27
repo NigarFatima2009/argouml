@@ -79,70 +79,90 @@ public class CrNoAssociations extends CrUML {
      */
     @Override
     public boolean predicate2(Object dm, Designer dsgr) {
-        if (!(Model.getFacade().isAClassifier(dm))) {
-            return NO_PROBLEM;
-        }
-        if (!(Model.getFacade().isPrimaryObject(dm))) {
-            return NO_PROBLEM;
-        }
-
-        // If the classifier does not have a name,
-        // then no problem - the model is not finished anyhow.
-        if ((Model.getFacade().getName(dm) == null)
-	    || ("".equals(Model.getFacade().getName(dm)))) {
-            return NO_PROBLEM;
-	}
-
-        // Abstract elements do not necessarily require associations
-        if (Model.getFacade().isAGeneralizableElement(dm)
-	    && Model.getFacade().isAbstract(dm)) {
+        // Early exit conditions - no problem if any of these are true
+        if (shouldSkipCritique(dm)) {
             return NO_PROBLEM;
         }
 
-        // Types can probably have associations, but we should not nag at them
-        // not having any.
-        // utility is a namespace collection - also not strictly required
-        // to have associations.
-        if (Model.getFacade().isType(dm)) {
-            return NO_PROBLEM;
-        }
-        if (Model.getFacade().isUtility(dm)) {
-            return NO_PROBLEM;
-        }
-
-        // See issue 1129: If the classifier has dependencies,
-        // then mostly there is no problem. 
-        if (Model.getFacade().getClientDependencies(dm).size() > 0) {
-            return NO_PROBLEM;
-        }
-        if (Model.getFacade().getSupplierDependencies(dm).size() > 0) {
-            return NO_PROBLEM;
-        }
-        
-        // special cases for use cases
-        // Extending use cases and use case that are being included are
-        // not required to have associations.
-        if (Model.getFacade().isAUseCase(dm)) {
-            Object usecase = dm;
-            Collection includes = Model.getFacade().getIncludes(usecase);
-            if (includes != null && includes.size() >= 1) {
-                return NO_PROBLEM;
-            }
-            Collection extend = Model.getFacade().getExtends(usecase);
-            if (extend != null && extend.size() >= 1) {
-                return NO_PROBLEM;
-            }
-        }
-        
-        
-
-        //TODO: different critic or special message for classes
-        //that inherit all ops but define none of their own.
-
+        // Check for associations
         if (findAssociation(dm, 0)) {
             return NO_PROBLEM;
         }
         return PROBLEM_FOUND;
+    }
+    
+    /**
+     * Determines if the critique should be skipped for the given design material.
+     * Extracted from predicate2 to improve readability and reduce cyclomatic complexity.
+     *
+     * @param dm the design material to check
+     * @return true if the critique should be skipped
+     */
+    private boolean shouldSkipCritique(Object dm) {
+        // Must be a classifier
+        if (!(Model.getFacade().isAClassifier(dm))) {
+            return true;
+        }
+        
+        // Must be a primary object
+        if (!(Model.getFacade().isPrimaryObject(dm))) {
+            return true;
+        }
+
+        // Skip if no name - model is not finished
+        String name = Model.getFacade().getName(dm);
+        if (name == null || name.isEmpty()) {
+            return true;
+        }
+
+        // Abstract elements do not necessarily require associations
+        if (Model.getFacade().isAGeneralizableElement(dm)
+            && Model.getFacade().isAbstract(dm)) {
+            return true;
+        }
+
+        // Types and utilities don't require associations
+        if (Model.getFacade().isType(dm) || Model.getFacade().isUtility(dm)) {
+            return true;
+        }
+
+        // Skip if has dependencies (see issue 1129)
+        if (hasDependencies(dm)) {
+            return true;
+        }
+        
+        // Special cases for use cases
+        if (Model.getFacade().isAUseCase(dm) && hasUseCaseRelationships(dm)) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Checks if the classifier has any dependencies.
+     *
+     * @param dm the design material to check
+     * @return true if the classifier has client or supplier dependencies
+     */
+    private boolean hasDependencies(Object dm) {
+        return Model.getFacade().getClientDependencies(dm).size() > 0
+            || Model.getFacade().getSupplierDependencies(dm).size() > 0;
+    }
+    
+    /**
+     * Checks if a use case has extends or includes relationships.
+     *
+     * @param usecase the use case to check
+     * @return true if the use case has extends or includes
+     */
+    private boolean hasUseCaseRelationships(Object usecase) {
+        Collection includes = Model.getFacade().getIncludes(usecase);
+        if (includes != null && includes.size() >= 1) {
+            return true;
+        }
+        Collection extend = Model.getFacade().getExtends(usecase);
+        return extend != null && extend.size() >= 1;
     }
 
     /**
@@ -156,59 +176,80 @@ public class CrNoAssociations extends CrUML {
             return true;
         }
 
-        if (depth > 50) {
+        if (depth > MAX_SEARCH_DEPTH) {
             return false;
         }
 
-        Iterator iter = Model.getFacade().getGeneralizations(dm).iterator();
+        // Check generalizations
+        if (findAssociationInGeneralizations(dm, depth)) {
+            return true;
+        }
 
+        // For use cases, check extends and includes
+        if (Model.getFacade().isAUseCase(dm)) {
+            return findAssociationInUseCaseRelationships(dm, depth);
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Maximum depth for recursive association search to prevent infinite loops.
+     */
+    private static final int MAX_SEARCH_DEPTH = 50;
+    
+    /**
+     * Helper method to find associations in generalizations.
+     * Extracted to reduce complexity of findAssociation method.
+     *
+     * @param dm The classifier to examine.
+     * @param depth Current search depth.
+     * @return true if an association is found in any generalization.
+     */
+    private boolean findAssociationInGeneralizations(Object dm, int depth) {
+        Iterator iter = Model.getFacade().getGeneralizations(dm).iterator();
         while (iter.hasNext()) {
             Object parent = Model.getFacade().getGeneral(iter.next());
-
-            if (parent == dm) {
-                continue;
+            if (parent != dm && Model.getFacade().isAClassifier(parent)) {
+                if (findAssociation(parent, depth + 1)) {
+                    return true;
+                }
             }
-
-            if (Model.getFacade().isAClassifier(parent)) {
+        }
+        return false;
+    }
+    
+    /**
+     * Helper method to find associations in use case extends/includes.
+     * Extracted to reduce complexity of findAssociation method.
+     *
+     * @param dm The use case to examine.
+     * @param depth Current search depth.
+     * @return true if an association is found in extends or includes.
+     */
+    private boolean findAssociationInUseCaseRelationships(Object dm, int depth) {
+        // Check extends
+        Iterator iter2 = Model.getFacade().getExtends(dm).iterator();
+        while (iter2.hasNext()) {
+            Object parent = Model.getFacade().getExtension(iter2.next());
+            if (parent != dm && Model.getFacade().isAClassifier(parent)) {
                 if (findAssociation(parent, depth + 1)) {
                     return true;
                 }
             }
         }
 
-        if (Model.getFacade().isAUseCase(dm)) {
-            // for use cases we need to check for extend/includes
-            // actors cannot have them, so no need to check
-            Iterator iter2 = Model.getFacade().getExtends(dm).iterator();
-            while (iter2.hasNext()) {
-                Object parent = Model.getFacade().getExtension(iter2.next());
-
-                if (parent == dm) {
-                    continue;
-                }
-
-                if (Model.getFacade().isAClassifier(parent)) {
-                    if (findAssociation(parent, depth + 1)) {
-                        return true;
-                    }
-                }
-            }
-
-            Iterator iter3 = Model.getFacade().getIncludes(dm).iterator();
-            while (iter3.hasNext()) {
-                Object parent = Model.getFacade().getBase(iter3.next());
-
-                if (parent == dm) {
-                    continue;
-                }
-
-                if (Model.getFacade().isAClassifier(parent)) {
-                    if (findAssociation(parent, depth + 1)) {
-                        return true;
-                    }
+        // Check includes
+        Iterator iter3 = Model.getFacade().getIncludes(dm).iterator();
+        while (iter3.hasNext()) {
+            Object parent = Model.getFacade().getBase(iter3.next());
+            if (parent != dm && Model.getFacade().isAClassifier(parent)) {
+                if (findAssociation(parent, depth + 1)) {
+                    return true;
                 }
             }
         }
+        
         return false;
     }
 
